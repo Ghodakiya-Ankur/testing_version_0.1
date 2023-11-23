@@ -11,8 +11,11 @@ from flask import (
 )
 import re
 from sqlalchemy import or_
+from flask_caching import Cache
+from cache import cache
 from flask import abort
 from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash
 from flask_migrate import Migrate
 from flask_ckeditor import CKEditor
 from flask_wtf import FlaskForm
@@ -47,11 +50,12 @@ secret_key = secrets.token_hex(16)
 admin_token = "your_admin_token_here"
 
 app = Flask(__name__)
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///articles.db"
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:ankur1234@localhost:3306/articles'
 app.config["SECRET_KEY"] = secret_key
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
 ckeditor = CKEditor(app)
+cache.init_app(app)
 
 
 class ArticleForm(FlaskForm):
@@ -135,6 +139,25 @@ def delete_comment(comment_id):
 
     # Redirect back to the comment dashboard after deletion
     return redirect(url_for("comment_dashboard"))
+
+# ------------------------------
+# this code is for addin cache
+# Add a new route to clear the cache
+
+def some_function():
+    from app import cache 
+
+@app.route('/clear-cache', methods=['POST'])
+def clear_cache():
+    try:
+        # Clear the cache
+        cache.clear()
+        app.logger.info("Cache cleared successfully.")
+
+        return 'Cache cleared successfully', 200
+    except Exception as e:
+        print('Error clearing cache:', str(e))
+        return 'Failed to clear cache', 500
 
 
 # ------------------------------
@@ -410,7 +433,7 @@ def serves_xml():
         pages_elem.append(page_elem)
 
         # Create a subelement for categories
-        categories = [
+    categories = [
             {"name": "astrology", "url": "/astrology"},
             {"name": "horoscope", "url": "/horoscope"},
             # Add more categories as needed
@@ -493,12 +516,13 @@ class RegistrationForm(FlaskForm):
 
 
 @app.route("/register", methods=["GET", "POST"])
-@login_required
+# @login_required
 def register():
     form = RegistrationForm()
     if form.validate_on_submit():
         # Securely hash the password before storing it in the database
-        hashed_password = generate_password_hash(form.password.data, method="sha256")
+        # hashed_password = generate_password_hash(form.password.data, method="sha256")
+        hashed_password = generate_password_hash(form.password.data)
 
         # Create a new user and store their information in the database
         new_user = User(
@@ -731,7 +755,53 @@ def display_blog_post(category, url):
 
 
 
-@app.route("/article/<int:article_id>", methods=["POST", "GET"])
+# @app.route("/article/<int:article_id>", methods=["POST", "GET"])
+# def article(article_id):
+#     try:
+#         article = Post.query.get(article_id)
+
+#         if article:
+#             ckeditor = False
+
+#             if request.method == "POST":
+#                 cmt = request.form.get("cmt_area")
+#                 name = request.form.get("cmt_name")
+#                 mail = request.form.get("cmt_mail")
+#                 action = request.form.get("action")
+
+#                 if action == "submit_Comment":
+#                     if is_valid_email(mail):
+#                         cmt = Comment(
+#                             Comment=cmt,
+#                             Name=name,
+#                             Mail=mail,
+#                             Page=f"article_{article_id}",
+#                         )
+#                         db.session.add(cmt)
+#                         db.session.commit()
+#                         flash("Comment inserted successfully", "success")
+#                     else:
+#                         flash("Invalid email format", "error")
+
+#             # Retrieve comments associated with the article, excluding deleted ones
+#             approved_comments = Comment.query.filter_by(
+#                 IsApproved=True, Page=f"article_{article_id}", IsDeleted=False
+#             ).all()
+
+#             return render_template(
+#                 "article.html",
+#                 article=article,
+#                 ckeditor=ckeditor,
+#                 comments=approved_comments,
+#             )
+
+#         else:
+#             return "Article not found", 404
+
+#     except Exception as e:
+#         return str(e), 500
+
+@app.route("/article/<int:article_id>", methods=["GET"])
 def article(article_id):
     try:
         article = Post.query.get(article_id)
@@ -739,27 +809,6 @@ def article(article_id):
         if article:
             ckeditor = False
 
-            if request.method == "POST":
-                cmt = request.form.get("cmt_area")
-                name = request.form.get("cmt_name")
-                mail = request.form.get("cmt_mail")
-                action = request.form.get("action")
-
-                if action == "submit_Comment":
-                    if is_valid_email(mail):
-                        cmt = Comment(
-                            Comment=cmt,
-                            Name=name,
-                            Mail=mail,
-                            Page=f"article_{article_id}",
-                        )
-                        db.session.add(cmt)
-                        db.session.commit()
-                        flash("Comment inserted successfully", "success")
-                    else:
-                        flash("Invalid email format", "error")
-
-            # Retrieve comments associated with the article, excluding deleted ones
             approved_comments = Comment.query.filter_by(
                 IsApproved=True, Page=f"article_{article_id}", IsDeleted=False
             ).all()
@@ -770,9 +819,36 @@ def article(article_id):
                 ckeditor=ckeditor,
                 comments=approved_comments,
             )
-
         else:
             return "Article not found", 404
+
+    except Exception as e:
+        return str(e), 500
+
+
+@app.route("/submit_comment/<int:article_id>", methods=["POST"])
+def submit_comment(article_id):
+    try:
+        cmt = request.form.get("cmt_area")
+        name = request.form.get("cmt_name")
+        mail = request.form.get("cmt_mail")
+        action = request.form.get("action")
+
+        if action == "submit_Comment":
+            if is_valid_email(mail):
+                cmt = Comment(
+                    Comment=cmt,
+                    Name=name,
+                    Mail=mail,
+                    Page=f"article_{article_id}",
+                )
+                db.session.add(cmt)
+                db.session.commit()
+                flash("Comment inserted successfully", "success")
+            else:
+                flash("Invalid email format", "error")
+
+            return redirect(url_for("article", article_id=article_id))
 
     except Exception as e:
         return str(e), 500
@@ -823,7 +899,7 @@ def format_url(url):
 
 
 @app.route("/create_article", methods=["POST", "GET"])
-@login_required
+# @login_required
 def create_article():
     form = ArticleForm()
     # Title =  " "
@@ -846,11 +922,11 @@ def create_article():
 
         if action == "create":
             # content = BeautifulSoup(content, "html.parser").get_text()
-            content = bleach.clean(
-                content,
-                tags=["p", "a", "img"],
-                attributes={"a": ["href", "title"], "img": ["src", "alt"]},
-            )
+            # content = bleach.clean(
+            #     content,
+            #     tags=["p", "a", "img"],
+            #     attributes={"a": ["href", "title"], "img": ["src", "alt"]},
+            # )
 
             try:
                 date = datetime.strptime(date_, "%Y-%m-%d").date()
